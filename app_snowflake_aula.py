@@ -41,8 +41,20 @@ def init_connection():
 @st.cache_data(ttl=600)
 def run_query(query):
     """Executa query e retorna DataFrame (cache de 10 minutos)"""
-    with init_connection() as conn:
-        return pd.read_sql(query, conn)
+    conn = init_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(query)
+        df = cur.fetch_pandas_all()
+        
+        # Converter colunas numéricas automaticamente
+        for col in df.columns:
+            # Tentar converter para numérico
+            df[col] = pd.to_numeric(df[col], errors='ignore')
+        
+        return df
+    finally:
+        cur.close()
 
 # ============================================================================
 # HEADER
@@ -231,32 +243,37 @@ if conectado:
             )
         
         with col3:
-            preco_min, preco_max = st.slider(
+            preco_range = st.slider(
                 "Faixa de Preço (USD)",
-                float(df['SALE_PRICE_USD'].min()),
-                float(df['SALE_PRICE_USD'].max()),
-                (float(df['SALE_PRICE_USD'].min()), float(df['SALE_PRICE_USD'].max()))
+                min_value=float(df['SALE_PRICE_USD'].min()),
+                max_value=float(df['SALE_PRICE_USD'].max()),
+                value=(float(df['SALE_PRICE_USD'].min()), float(df['SALE_PRICE_USD'].max()))
             )
         
-        # Aplicar filtros
+        # Filtrar dados
         df_filtrado = df[
             (df['ITEM_CATEGORY'].isin(categorias)) &
             (df['ITEM_SUBCATEGORY'].isin(subcategorias)) &
-            (df['SALE_PRICE_USD'] >= preco_min) &
-            (df['SALE_PRICE_USD'] <= preco_max)
+            (df['SALE_PRICE_USD'] >= preco_range[0]) &
+            (df['SALE_PRICE_USD'] <= preco_range[1])
         ]
+        
+        st.markdown(f"**{len(df_filtrado)}** itens encontrados")
+        
+        # Estatísticas resumidas
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Preço Médio", f"${df_filtrado['SALE_PRICE_USD'].mean():.2f}")
+        with col2:
+            st.metric("Lucro Médio", f"${df_filtrado['PROFIT'].mean():.2f}")
+        with col3:
+            st.metric("Margem Média", f"{df_filtrado['MARGIN_PERCENT'].mean():.1f}%")
         
         st.markdown("---")
         
-        # Estatísticas do filtro
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Itens Filtrados", len(df_filtrado))
-        col2.metric("Receita Potencial", f"${df_filtrado['SALE_PRICE_USD'].sum():,.2f}")
-        col3.metric("Lucro Potencial", f"${df_filtrado['PROFIT'].sum():,.2f}")
-        
         # Tabela de dados
-        st.subheader(f"📋 Dados ({len(df_filtrado)} itens)")
-        
+        st.subheader("📋 Dados Detalhados")
         st.dataframe(
             df_filtrado.style.format({
                 'COST_OF_GOODS_USD': '${:.2f}',
@@ -357,9 +374,10 @@ if conectado:
         ---
         
         ### 🏗️ Arquitetura
-```
+        
+        ```
         [Usuário] → [Streamlit UI] → [Python] → [Snowflake Connector] → [Snowflake Data Warehouse]
-```
+        ```
         
         ---
         
@@ -375,7 +393,8 @@ if conectado:
         ### 🔧 Configuração do Projeto
         
         **1. Arquivo `.streamlit/secrets.toml`:**
-```toml
+        
+        ```toml
         [snowflake]
         user = "seu_usuario"
         password = "sua_senha"
@@ -384,18 +403,25 @@ if conectado:
         database = "SNOWFLAKE_LEARNING_DB"
         schema = "seu_schema"
         role = "ACCOUNTADMIN"
-```
+        ```
         
-        **2. Conexão com Cache:**
-```python
+        **2. Conexão com Cache (CORRIGIDA):**
+        
+        ```python
         @st.cache_resource
         def init_connection():
             return snowflake.connector.connect(...)
         
         @st.cache_data(ttl=600)
         def run_query(query):
-            return pd.read_sql(query, conn)
-```
+            conn = init_connection()
+            cur = conn.cursor()
+            try:
+                cur.execute(query)
+                return cur.fetch_pandas_all()
+            finally:
+                cur.close()
+        ```
         
         ---
         
@@ -431,8 +457,8 @@ if conectado:
         - Separação compute/storage
         
         **2. Cache:**
-        - `@st.cache_resource`: Cache de conexões
-        - `@st.cache_data`: Cache de queries
+        - `@st.cache_resource`: Cache de conexões (não fecha)
+        - `@st.cache_data`: Cache de queries (com TTL)
         - TTL (Time To Live): 600 segundos
         
         **3. Segurança:**
@@ -443,7 +469,8 @@ if conectado:
         ---
         
         ### 🚀 Como Executar Localmente
-```bash
+        
+        ```bash
         # 1. Instalar dependências
         pip install -r requirements.txt
         
@@ -455,7 +482,7 @@ if conectado:
         
         # 4. Rodar aplicação
         streamlit run app_snowflake_aula.py
-```
+        ```
         
         ---
         
